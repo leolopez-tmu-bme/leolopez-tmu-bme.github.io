@@ -1,0 +1,133 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MetaPulse | Leo Lopez</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,700;12..96,800&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet"><link rel="stylesheet" href="style.css"></head><body><header class="top"><div class="wrap"><a class="mark" href="index.html">Leo Lopez</a><nav aria-label="Primary"><a href="index.html#achievements">Achievements</a><a href="index.html#projects">Projects</a><a href="index.html#experience">Experience</a><a href="index.html#contact">Contact</a></nav></div></header>
+<main class="wrap"><div class="ph"><a class="back" href="index.html#projects">Back to projects</a>
+<h1>MetaPulse heart rate monitor</h1><span class="badge">BMES Arduino Heart Rate Monitor Design Competition</span>
+<p class="lede" style="margin-top:1.25rem">An Arduino Uno, a pulse sensor, and a 16x2 LCD that displays heart rate in real time. It works on any appendage with blood flow, not just a finger.</p>
+<div class="facts"><div><b>C/C++</b><span>Firmware</span></div><div><b>Live BPM</b><span>On a 16x2 LCD</span></div><div><b>4</b><span>Team members</span></div></div></div>
+<div class="body">
+<h2>My role</h2><p>I led the design, wiring, and programming, from circuit layout to firmware. The result was a functioning device that measured and displayed heart rate in real time. Team: Anthony, Shadid, Leo, and Rameesha.</p>
+<h2>How it works</h2><p>The pulse sensor is light based. As blood flow increases, less light reaches the sensor, and the firmware turns that signal on A0 into beats per minute. When pressure on the sensor is right, readings were consistent against professional monitors.</p>
+<div class="gal"><figure class="fig"><img src="img/metapulse-breadboard.jpg" alt="MetaPulse breadboard build with Arduino Uno and LCD" loading="lazy"><figcaption>The build: Arduino Uno, pulse sensor, LCD, and contrast pot</figcaption></figure><figure class="fig"><img src="img/metapulse-reference-wiring.jpg" alt="Reference wiring diagram for Arduino, pulse sensor, and LCD" loading="lazy"><figcaption>Reference wiring diagram (source: DPV Technology)</figcaption></figure></div><h2>Wiring</h2><div class="scroll"><table><tr><th>Part</th><th>Pin</th><th>Connects to</th></tr>
+<tr><td>Pulse sensor</td><td>S / + / -</td><td>A0 / 5V / GND</td></tr><tr><td>LCD</td><td>VSS, RW, K</td><td>GND</td></tr><tr><td>LCD</td><td>VDD</td><td>5V</td></tr>
+<tr><td>LCD</td><td>V0</td><td>Middle pin of 10k pot, ends to 5V and GND</td></tr><tr><td>LCD</td><td>RS / E</td><td>D12 / D11</td></tr>
+<tr><td>LCD</td><td>D4 / D5 / D6 / D7</td><td>D5 / D4 / D3 / D2</td></tr><tr><td>LCD</td><td>A</td><td>5V through 220 ohm</td></tr></table></div>
+<h2>Sketch</h2><p>Full sketch for the wiring above. <a class="dl" href="metapulse.ino" download>Download metapulse.ino</a></p><pre>/*
+  MetaPulse: Arduino Uno + Pulse Sensor + 16x2 LCD (BPM display)
+
+  Wiring
+  ------
+  Pulse sensor:  S (signal) -&gt; A0,  + -&gt; 5V,  - -&gt; GND
+  LCD 16x2 (4-bit mode):
+    LCD VSS -&gt; GND          LCD VDD -&gt; 5V
+    LCD V0  -&gt; middle pin of 10k pot (contrast), pot ends to 5V/GND
+    LCD RS  -&gt; D12          LCD RW  -&gt; GND
+    LCD E   -&gt; D11
+    LCD D4  -&gt; D5           LCD D5  -&gt; D4
+    LCD D6  -&gt; D3           LCD D7  -&gt; D2
+    LCD A   -&gt; 5V (through 220 ohm)   LCD K -&gt; GND
+
+  Method: the sensor output rises and falls with blood flow. The sketch
+  tracks the signal&#x27;s peak and trough, sets an adaptive threshold halfway
+  between them, and times the gap between rising crossings (inter-beat
+  interval). BPM is the average of the last few valid intervals.
+*/
+#include &lt;LiquidCrystal.h&gt;
+
+const int PULSE_PIN = A0;
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);  // RS, E, D4, D5, D6, D7 pins
+
+const unsigned long SAMPLE_MS = 5;      // 200 samples per second
+const unsigned long NO_PULSE_MS = 2500; // reset if no beat for this long
+const int MIN_IBI = 300;                // 200 BPM upper limit
+const int MAX_IBI = 2000;               // 30 BPM lower limit
+const int AVG_COUNT = 5;
+
+int thresh = 512, peakVal = 512, troughVal = 512;
+bool inPulse = false, firstBeat = true;
+unsigned long lastBeat = 0, lastSample = 0, lastDraw = 0;
+unsigned long ibi = 800;
+unsigned long ibiBuf[AVG_COUNT];
+int ibiCount = 0, ibiIdx = 0;
+int bpm = 0;
+int s1 = 512, s2 = 512, s3 = 512;       // moving average window
+
+void resetDetector() {
+  thresh = 512; peakVal = 512; troughVal = 512;
+  inPulse = false; firstBeat = true;
+  ibiCount = 0; ibiIdx = 0; bpm = 0;
+  lastBeat = millis();
+}
+
+void addInterval(unsigned long v) {
+  ibiBuf[ibiIdx] = v;
+  ibiIdx = (ibiIdx + 1) % AVG_COUNT;
+  if (ibiCount &lt; AVG_COUNT) ibiCount++;
+  unsigned long sum = 0;
+  for (int i = 0; i &lt; ibiCount; i++) sum += ibiBuf[i];
+  bpm = (int)(60000UL / (sum / ibiCount));
+}
+
+void drawLcd() {
+  lcd.setCursor(0, 0);
+  if (bpm &gt; 0) {
+    lcd.print(&quot;Heart-Beat Found&quot;);
+    lcd.setCursor(0, 1);
+    lcd.print(&quot;BPM: &quot;);
+    lcd.print(bpm);
+    lcd.print(&quot;   &quot;);
+  } else {
+    lcd.print(&quot;Place sensor on &quot;);
+    lcd.setCursor(0, 1);
+    lcd.print(&quot;skin and hold   &quot;);
+  }
+}
+
+void setup() {
+  lcd.begin(16, 2);
+  lcd.print(&quot;MetaPulse&quot;);
+  delay(1200);
+  lcd.clear();
+  resetDetector();
+}
+
+void loop() {
+  unsigned long now = millis();
+  if (now - lastSample &gt;= SAMPLE_MS) {
+    lastSample = now;
+    s3 = s2; s2 = s1; s1 = analogRead(PULSE_PIN);
+    int sig = (s1 + s2 + s3) / 3;
+    unsigned long since = now - lastBeat;
+
+    if (sig &lt; thresh &amp;&amp; since &gt; (ibi * 3) / 5 &amp;&amp; sig &lt; troughVal) troughVal = sig;
+    if (sig &gt; thresh &amp;&amp; sig &gt; peakVal) peakVal = sig;
+
+    // Rising crossing of the threshold marks a beat
+    if (sig &gt; thresh &amp;&amp; !inPulse &amp;&amp; since &gt; 250 &amp;&amp; since &gt; (ibi * 3) / 5) {
+      inPulse = true;
+      if (firstBeat) {
+        firstBeat = false;            // first interval is not reliable
+      } else if (since &gt;= MIN_IBI &amp;&amp; since &lt;= MAX_IBI) {
+        ibi = since;
+        addInterval(since);
+      }
+      lastBeat = now;
+    }
+
+    // Falling crossing: update threshold from the latest amplitude
+    if (sig &lt; thresh &amp;&amp; inPulse) {
+      inPulse = false;
+      int amp = peakVal - troughVal;
+      if (amp &gt; 20) thresh = troughVal + amp / 2;  // ignore noise-sized swings
+      peakVal = thresh;
+      troughVal = thresh;
+    }
+
+    if (since &gt; NO_PULSE_MS) resetDetector();
+  }
+
+  if (now - lastDraw &gt;= 250) {
+    lastDraw = now;
+    drawLcd();
+  }
+}
+</pre>
+</div></main><footer><div class="wrap"><p class="small">Leo Lopez, Biomedical Engineering, Toronto Metropolitan University. <a href="index.html#contact">Contact</a></p></div></footer></body></html>
